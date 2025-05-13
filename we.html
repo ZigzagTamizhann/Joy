@@ -1,0 +1,199 @@
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ESP32 Car Controller</title>
+<style>
+/* ── neon look (shared) ──────────────────────────────────────── */
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:flex;flex-direction:column;
+     justify-content:flex-start;align-items:center;
+     font-family:Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+     background:#0d0d12 radial-gradient(circle at 30% 10%,#222,#0d0d12 60%);
+     color:#e0e0ff;text-align:center;overflow-x:hidden}
+h1{margin:25px 0 10px;font-size:1.6rem;color:#66fffb;text-shadow:0 0 6px #0ff}
+input,button{font-size:1.05rem;padding:11px 22px;margin:8px;border:none;
+             border-radius:8px;outline:none}
+input[type=text]{width:230px;background:#1a1a24;color:#c6c6ff;
+                 border:1px solid #444;border-radius:6px;transition:border .25s}
+input[type=text]:focus{border-color:#0ff;box-shadow:0 0 6px #0ff}
+button{background:#2272ff;background:linear-gradient(145deg,#2080ff 0%,#1c55ff 100%);
+       color:#fff;cursor:pointer;user-select:none;
+       transition:transform .15s,box-shadow .15s;
+       box-shadow:0 4px 6px rgba(0,0,0,.4)}
+button:hover{transform:translateY(-2px);box-shadow:0 6px 10px rgba(0,0,0,.45)}
+button:active{transform:translateY(1px);box-shadow:0 3px 5px rgba(0,0,0,.35)}
+.forward{background:#2272ff}
+.back   {background:#ff7e00;background:linear-gradient(145deg,#ff8c00,#c45500)}
+.left,.right{background:#2272ff}
+.yes   {background:#00c979;background:linear-gradient(145deg,#00d87b,#009a5e)}
+.no    {background:#ff5733;background:linear-gradient(145deg,#ff6844,#c42500)}
+input[type=range]{appearance:none;width:230px;background:transparent}
+input[type=range]::-webkit-slider-runnable-track{height:8px;border-radius:4px;background:#303050}
+input[type=range]::-webkit-slider-thumb{appearance:none;width:18px;height:18px;border-radius:50%;
+  background:#66fffb;border:2px solid #0ddee1;margin-top:-5px;transition:background .25s}
+input[type=range]:active::-webkit-slider-thumb{background:#0ff}
+#panel{animation:fadeIn .6s ease forwards;opacity:0}
+@keyframes fadeIn{to{opacity:1}}
+@keyframes pulse{0%{text-shadow:0 0 6px #0ff}50%{text-shadow:0 0 18px #0ff}100%{text-shadow:0 0 6px #0ff}}
+.pulsing{color:#66fffb;animation:pulse 1s infinite}
+
+/* ── landscape layout ────────────────────────────────────────── */
+#land{display:none}
+@media (orientation:landscape){
+  h1{font-size:1.4rem}
+  #land{display:flex;flex-direction:row;align-items:center;
+        justify-content:space-between;width:100%;max-width:900px}
+  #leftCol,#rightCol{display:flex;flex-direction:column;align-items:center;flex:0 0 100px}
+  #centerCol{flex:1;display:flex;flex-direction:column;
+             justify-content:space-between;align-items:center}
+  #distanceBox{margin-bottom:10px;font-size:1.2rem}
+  #speedBox   {margin-top:12px}
+  button.big{width:80px;height:80px;font-size:2rem}
+}
+
+/* portrait keeps stacked flow */
+</style></head><body>
+
+<h1>ESP32 Car Control</h1>
+
+<div id="connectBox">
+  <p>ESP32 IP / host-name</p>
+  <input id="ipField" placeholder="medibot.local or 192.168.x.x">
+  <button onclick="connect()">Connect</button>
+  <p id="connStatus"></p>
+</div>
+
+<section id="panel">
+  <!-- LANDSCAPE CONTROLS -->
+  <div id="land">
+    <!-- Left column : Forward + Back -->
+    <div id="leftCol">
+      <button class="big forward" id="btnF"
+        onpointerdown="startCmd('fwd')" onpointerup="stopCmd()">▲</button>
+      <button class="big back" id="btnB"
+        onpointerdown="startCmd('bwd')" onpointerup="stopCmd()">▼</button>
+    </div>
+
+    <!-- Center column -->
+    <div id="centerCol">
+      <div id="distanceBox">
+        <button onclick="getDist()">Distance ▶</button><br>
+        <span id="dist">Distance: -- cm</span><br>
+        <label style="cursor:pointer;font-size:.9rem">
+          <input type="checkbox" onchange="liveToggle(this)"> Live ON/OFF
+        </label>
+      </div>
+
+      <div>
+        <button class="yes big" onclick="api('/yes')">YES</button>
+        <button class="no  big" onclick="api('/no')">NO</button>
+      </div>
+
+      <div id="speedBox">
+        <strong>Speed</strong><br>
+        <input id="speed" type="range" min="0" max="255" value="200">
+      </div>
+    </div>
+
+    <!-- Right column : Left / Right -->
+    <div id="rightCol">
+      <button class="big left"  id="btnL"
+        onpointerdown="startCmd('left')"  onpointerup="stopCmd()">◀</button>
+      <button class="big right" id="btnR"
+        onpointerdown="startCmd('right')" onpointerup="stopCmd()">▶</button>
+    </div>
+  </div>
+
+  <!-- PORTRAIT CONTROLS (fallback) -->
+  <div id="portrait" style="display:none">
+    <p><strong>Speed</strong></p>
+    <input id="speedP" type="range" min="0" max="255" value="200">
+
+    <div class="controls">
+      <button class="big forward" onpointerdown="startCmd('fwd')" onpointerup="stopCmd()">▲</button><br>
+      <button class="big left"  onpointerdown="startCmd('left')" onpointerup="stopCmd()">◀</button>
+      <button class="big right" onpointerdown="startCmd('right')"onpointerup="stopCmd()">▶</button><br>
+      <button class="big back"  onpointerdown="startCmd('bwd')"  onpointerup="stopCmd()">▼</button>
+    </div>
+
+    <p>
+      <button class="yes big" onclick="api('/yes')">YES</button>
+      <button class="no  big" onclick="api('/no')">NO</button>
+    </p>
+
+    <p>
+      <button onclick="getDist()">Distance ▶</button><br>
+      <span id="distP">Distance: -- cm</span><br>
+      <label style="cursor:pointer;font-size:.9rem">
+        <input type="checkbox" onchange="liveToggle(this)"> Live ON/OFF
+      </label>
+    </p>
+  </div>
+</section>
+
+<script>
+/* orientation swap */
+function applyOrientation(){
+  if(matchMedia("(orientation:landscape)").matches){
+    land.style.display="flex";   portrait.style.display="none";
+  }else{
+    land.style.display="none";   portrait.style.display="block";
+  }
+}
+window.addEventListener("orientationchange",applyOrientation);
+applyOrientation();
+
+/* DOM handles */
+const ipField=document.getElementById("ipField"),
+      connStat=document.getElementById("connStatus"),
+      connectBx=document.getElementById("connectBox"),
+      panelElm =document.getElementById("panel"),
+      speedSliders=document.querySelectorAll('input[type="range"]'),
+      distSpans=document.querySelectorAll('#dist,#distP');
+
+let baseURL="",liveID=null,driveID=null;
+
+/* restore last host */
+if(localStorage.getItem("esp32car_host"))
+  ipField.value=localStorage.getItem("esp32car_host");
+
+/* connect */
+async function connect(){
+  const host=ipField.value.trim();
+  if(!host){alert("Enter ESP32 host");return;}
+  baseURL=`http://${host}`;
+  connStat.textContent="Connecting…";
+  try{await api("/ping");
+      localStorage.setItem("esp32car_host",host);
+      connectBx.style.display="none";panelElm.style.display="block";}
+  catch{alert("ESP32 not reachable");}
+}
+
+/* REST helpers */
+const api=path=>fetch(baseURL+path,{mode:"cors"});
+const curSpeed=()=>speedSliders[0].value;
+const drive=dir=>api(`/move?dir=${dir}&spd=${curSpeed()}`);
+
+/* continuous command */
+function startCmd(dir){
+  clearInterval(driveID);drive(dir);
+  driveID=setInterval(()=>drive(dir),200);
+}
+function stopCmd(){
+  clearInterval(driveID);driveID=null;drive('stop');
+}
+
+/* distance */
+const fmt=cm=>cm<0?"Out of range":`${cm} cm`;
+async function getDist(){
+  try{const j=await api("/distance").then(r=>r.json());
+      distSpans.forEach(s=>s.textContent="Distance: "+fmt(j.cm));}
+  catch{distSpans.forEach(s=>s.textContent="Distance: --");}
+}
+function liveToggle(box){
+  distSpans.forEach(s=>s.classList.toggle("pulsing",box.checked));
+  if(box.checked){getDist();liveID=setInterval(getDist,1000);}
+  else{clearInterval(liveID);liveID=null;}
+}
+</script>
+</body></html>
